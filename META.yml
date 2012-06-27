@@ -21,7 +21,10 @@ no_index:
     - inc
     - t
 requires:
+  AnyEvent: 0
+  AnyEvent::Handle: 0
+  Data::MessagePack: 0
   perl: 5.6.0
 resources:
   license: http://opensource.org/licenses/bsd-license.php
-version: 0.01
+version: 0.02
