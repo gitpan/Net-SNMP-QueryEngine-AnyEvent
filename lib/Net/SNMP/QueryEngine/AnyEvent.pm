@@ -4,16 +4,18 @@ use 5.006;
 use strict;
 use warnings;
 
-our $VERSION = '0.02';
+our $VERSION = '0.04';
 
 use AnyEvent::Handle;
 use base 'AnyEvent::Handle';
 use Data::MessagePack;
+use Data::MessagePack::Stream;
 
-use constant RT_SETOPT   => 1;
-use constant RT_INFO     => 3;
-use constant RT_GET      => 4;
-use constant RT_GETTABLE => 5;
+use constant RT_SETOPT    => 1;
+use constant RT_INFO      => 3;
+use constant RT_GET       => 4;
+use constant RT_GETTABLE  => 5;
+use constant RT_DEST_INFO => 6;
 use constant RT_REPLY    => 0x10;
 use constant RT_ERROR    => 0x20;
 
@@ -27,8 +29,7 @@ sub new
 	$self->{sqe}{condvar} = AnyEvent->condvar;
 	$self->{sqe}{pending} = 0;
 	$self->{sqe}{mp} = Data::MessagePack->new->prefer_integer;
-	$self->{sqe}{up} = Data::MessagePack::Unpacker->new;
-	$self->{sqe}{nup} = 0;
+	$self->{sqe}{up} = Data::MessagePack::Stream->new;
 	$self->{sqe}{cid} = int rand 1000000;
 	$self->{sqe}{cb} = {};
 	return $self;
@@ -56,12 +57,13 @@ sub cmd
 sub read_handler
 {
 	my $self = shift;
-	my $cl = length($self->{rbuf});
-	$self->{sqe}{nup} += $cl;
-again:
-	my $o = $self->{sqe}{up}->execute($self->{rbuf}, 0);
-	if ($o) {
+
+	$self->{sqe}{up}->feed($self->{rbuf});
+	$self->{rbuf} = "";
+
+	while ($self->{sqe}{up}->next) {
 		my $data = $self->{sqe}{up}->data;
+
 		if (ref($data) ne "ARRAY" || @$data < 3 || !$self->{sqe}{cb}{$data->[1]}) {
 		} else {
 			$self->{sqe}{cb}{$data->[1]}->($self, $data->[0] & RT_REPLY, $data->[2]);
@@ -71,12 +73,7 @@ again:
 				$self->{sqe}{condvar}->send;
 			}
 		}
-		substr($self->{rbuf}, 0, $o - ($self->{sqe}{nup}-$cl), "");
-		$self->{sqe}{up}->reset;
-		$cl = $self->{sqe}{nup} = length($self->{rbuf});
-		goto again if $cl;
 	}
-	$self->{rbuf} = "";
 }
 
 sub setopt
@@ -107,13 +104,19 @@ sub info
 	$self->cmd($cb, RT_INFO, ++$self->{sqe}{cid});
 }
 
+sub dest_info
+{
+	my ($self, $cb, $host, $port) = @_;
+	$self->cmd($cb, RT_DEST_INFO, ++$self->{sqe}{cid}, $host, $port);
+}
+
 =head1 NAME
 
 Net::SNMP::QueryEngine::AnyEvent - multiplexing SNMP query engine client using AnyEvent
 
 =head1 VERSION
 
-Version 0.02
+Version 0.04
 
 =head1 SYNOPSIS
 
@@ -181,6 +184,10 @@ Performs gettable request.
 
 Performs info request.
 
+=head2 dest_info
+
+Performs dest_info request.
+
 =head1 AUTHOR
 
 Anton Berezin, C<< <tobez at tobez.org> >>
@@ -234,7 +241,7 @@ This work is in part sponsored by Telia Denmark.
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (c) 2012, Anton Berezin "<tobez@tobez.org>". All rights
+Copyright (c) 2012-2014, Anton Berezin "<tobez@tobez.org>". All rights
 reserved.
 
 Redistribution and use in source and binary forms, with or without
